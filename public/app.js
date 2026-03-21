@@ -221,10 +221,17 @@ async function initSpotify() {
   $('song-search-area').classList.remove('hidden');
 
   // Initialize Spotify Web Playback SDK (only host needs this for playing)
-  if (isHost && window.Spotify) {
-    setupSpotifyPlayer();
-  } else if (isHost) {
-    window.onSpotifyWebPlaybackSDKReady = setupSpotifyPlayer;
+  if (isHost) {
+    if (window.Spotify) {
+      setupSpotifyPlayer();
+    } else {
+      // Dynamically load the Spotify SDK only when needed
+      window.onSpotifyWebPlaybackSDKReady = setupSpotifyPlayer;
+      const script = document.createElement('script');
+      script.src = 'https://sdk.scdn.co/spotify-player.js';
+      script.onerror = () => console.warn('Spotify SDK failed to load — playback may not work on this device');
+      document.body.appendChild(script);
+    }
   }
 }
 
