@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guess the Song 🎵</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ─── Welcome Screen ─── -->
+    <div id="screen-welcome" class="screen active">
+      <div class="card welcome-card">
+        <h1>🎵 Guess the Song</h1>
+        <p class="subtitle">Play with friends — one guesses, others know!</p>
+
+        <div class="welcome-buttons">
+          <button id="btn-create" class="btn btn-primary btn-large">Create Room</button>
+          <button id="btn-join" class="btn btn-secondary btn-large">Join Room</button>
+        </div>
+
+        <!-- Create Room Form -->
+        <div id="form-create" class="form hidden">
+          <input type="text" id="input-host-name" placeholder="Your name" maxlength="20" />
+          <button id="btn-create-go" class="btn btn-primary">Create & Connect Spotify</button>
+        </div>
+
+        <!-- Join Room Form -->
+        <div id="form-join" class="form hidden">
+          <input type="text" id="input-join-name" placeholder="Your name" maxlength="20" />
+          <input type="text" id="input-room-code" placeholder="Room code (e.g. AB3F)" maxlength="4" />
+          <button id="btn-join-go" class="btn btn-primary">Join Room</button>
+        </div>
+
+        <p id="welcome-error" class="error hidden"></p>
+      </div>
+    </div>
+
+    <!-- ─── Lobby Screen ─── -->
+    <div id="screen-lobby" class="screen">
+      <div class="lobby-layout">
+        <div class="card lobby-info">
+          <div class="room-header">
+            <h2>Room: <span id="lobby-room-code" class="room-code"></span></h2>
+            <button id="btn-copy-code" class="btn btn-small" title="Copy room code">📋 Copy</button>
+          </div>
+          <div id="lobby-players" class="player-list"></div>
+          <div id="lobby-host-controls" class="hidden">
+            <div class="mode-select">
+              <p class="mode-label">Game Mode:</p>
+              <div class="mode-buttons">
+                <button id="mode-robin" class="mode-btn active" data-mode="round-robin">
+                  🔄 Round Robin
+                  <span class="mode-desc">Players take turns guessing</span>
+                </button>
+                <button id="mode-challenge" class="mode-btn" data-mode="challenge">
+                  🎯 Challenge
+                  <span class="mode-desc">Pick someone — they guess all songs</span>
+                </button>
+              </div>
+              <div id="challenge-picker" class="challenge-picker hidden">
+                <p>Who's being challenged?</p>
+                <div id="challenge-player-list"></div>
+              </div>
+            </div>
+            <button id="btn-start-game" class="btn btn-primary btn-large" disabled>
+              Start Game (need 2+ songs)
+            </button>
+          </div>
+        </div>
+
+        <div class="card lobby-songs">
+          <h3>🎶 Song Playlist (<span id="song-count">0</span> songs)</h3>
+
+          <div id="spotify-connect-prompt" class="spotify-prompt">
+            <p>Connect Spotify to search and add songs</p>
+            <button id="btn-connect-spotify" class="btn btn-spotify">Connect Spotify</button>
+          </div>
+
+          <div id="song-search-area" class="hidden">
+            <div class="search-tabs">
+              <button id="tab-search" class="tab-btn active">Search</button>
+              <button id="tab-bulk" class="tab-btn">Paste List</button>
+              <button id="tab-playlist" class="tab-btn">My Playlists</button>
+            </div>
+
+            <div id="search-mode">
+              <div class="search-bar">
+                <input type="text" id="input-search" placeholder="Search for a song..." />
+                <button id="btn-search" class="btn btn-primary">Search</button>
+              </div>
+              <div id="search-results" class="search-results"></div>
+            </div>
+
+            <div id="bulk-mode" class="hidden">
+              <p class="bulk-hint">Paste a list of songs (one per line). Format: <strong>Song Name - Artist</strong></p>
+              <textarea id="input-bulk" rows="8" placeholder="Shape of You - Ed Sheeran
+Blinding Lights - The Weeknd
+Bohemian Rhapsody - Queen"></textarea>
+              <button id="btn-bulk-add" class="btn btn-primary">Add All Songs</button>
+              <div id="bulk-status" class="bulk-status hidden"></div>
+            </div>
+
+            <div id="playlist-mode" class="hidden">
+              <p class="bulk-hint">Pick a playlist to import songs from:</p>
+              <div id="playlist-list" class="playlist-list">
+                <p class="loading-text">Loading your playlists...</p>
+              </div>
+              <div id="playlist-tracks" class="playlist-tracks hidden">
+                <div class="playlist-tracks-header">
+                  <button id="btn-back-playlists" class="btn btn-small">← Back</button>
+                  <span id="playlist-tracks-title"></span>
+                </div>
+                <div id="playlist-tracks-list"></div>
+                <button id="btn-add-all-playlist" class="btn btn-primary">Add All Songs</button>
+                <div id="playlist-import-status" class="bulk-status hidden"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="playlist" class="playlist"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Game Screen ─── -->
+    <div id="screen-game" class="screen">
+      <div class="game-layout">
+        <div class="game-header">
+          <span id="game-round-info">Round 1 / 5</span>
+          <span id="game-room-code" class="room-code-small"></span>
+        </div>
+
+        <div id="challenge-banner" class="challenge-banner hidden">
+          🎯 Challenge: <span id="challenge-target-name"></span>
+        </div>
+
+        <!-- Scoreboard -->
+        <div class="card scoreboard">
+          <h3>Scoreboard</h3>
+          <div id="game-scoreboard"></div>
+        </div>
+
+        <!-- Game Area -->
+        <div class="card game-area">
+          <div id="guesser-badge" class="guesser-badge hidden">
+            <span>🎧</span> <span id="guesser-name"></span> is guessing!
+          </div>
+
+          <!-- What non-guessers see -->
+          <div id="song-reveal" class="song-reveal hidden">
+            <img id="reveal-album-art" src="" alt="Album art" />
+            <div class="song-info">
+              <p class="song-name" id="reveal-song-name"></p>
+              <p class="song-artist" id="reveal-song-artist"></p>
+            </div>
+            <p id="hint-text-default" class="hint-text">Shhh... don't tell the guesser! 🤫</p>
+            <!-- Judge controls for challenge mode -->
+            <div id="judge-controls" class="judge-controls hidden">
+              <p class="judge-prompt">Did they get it right?</p>
+              <div class="judge-buttons">
+                <button id="btn-judge-correct" class="btn btn-green">✓ Correct (+1 pt)</button>
+                <button id="btn-judge-skip" class="btn btn-secondary">Skip →</button>
+                <button id="btn-judge-end" class="btn btn-danger">End Game</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- What the guesser sees -->
+          <div id="guess-area" class="guess-area hidden">
+            <div class="timer-row">
+              <div class="timer-bar-container">
+                <div id="timer-bar" class="timer-bar"></div>
+              </div>
+              <span id="timer-text" class="timer-text">30s</span>
+            </div>
+            <div class="listening-animation">
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+            </div>
+            <p class="guess-prompt">What song is this? 🤔</p>
+            <div class="guess-fields">
+              <input type="text" id="input-guess-song" placeholder="Song name..." />
+              <input type="text" id="input-guess-artist" placeholder="Artist name..." />
+            </div>
+            <div class="guess-actions">
+              <button id="btn-guess" class="btn btn-primary">Guess!</button>
+              <button id="btn-extend" class="btn btn-secondary">+60s (-0.5 pts)</button>
+            </div>
+            <p id="penalty-info" class="penalty-info hidden"></p>
+            <div id="guess-feedback" class="guess-feedback hidden"></div>
+          </div>
+
+          <!-- Result after guess or skip -->
+          <div id="round-result" class="round-result hidden">
+            <div id="result-content"></div>
+            <img id="result-album-art" src="" alt="Album art" class="result-album" />
+            <p id="result-song-info"></p>
+            <button id="btn-next-round" class="btn btn-primary hidden">Next Round →</button>
+          </div>
+        </div>
+
+        <!-- Host controls -->
+        <div id="game-host-controls" class="game-controls hidden">
+          <button id="btn-skip" class="btn btn-secondary">Skip / Reveal</button>
+          <button id="btn-end-game" class="btn btn-danger">End Game</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Game Over Screen ─── -->
+    <div id="screen-gameover" class="screen">
+      <div class="card gameover-card">
+        <h1>🏆 Game Over!</h1>
+        <div id="final-scores"></div>
+        <div class="gameover-buttons">
+          <button id="btn-play-again" class="btn btn-primary btn-large">Play Again (same songs)</button>
+          <button id="btn-start-over" class="btn btn-secondary btn-large">Start Over (new songs)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Spotify Web Playback SDK -->
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
