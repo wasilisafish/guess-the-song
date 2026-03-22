@@ -12,6 +12,10 @@ let timerSeconds = 30;
 let currentExtensions = 0;
 let selectedMode = 'round-robin';
 let selectedChallengeTarget = null;
+let isMusicPlayer = false;
+
+// Detect if this is a desktop browser (Spotify SDK only works on desktop)
+const isDesktop = !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
 // ─── DOM Elements ────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
@@ -75,6 +79,7 @@ $('btn-create-go').addEventListener('click', () => {
 
       // If not connected to Spotify, prompt login
       if (!spotifyVisitorId) {
+        localStorage.setItem('pendingIsHost', '1');
         window.location.href = `/login?roomCode=${roomCode}`;
       } else {
         initSpotify();
@@ -108,22 +113,39 @@ $('btn-join-go').addEventListener('click', () => {
 // Auto-rejoin after Spotify redirect
 if (localStorage.getItem('pendingRoom') && spotifyVisitorId) {
   const pendingRoom = localStorage.getItem('pendingRoom');
-  const pendingName = localStorage.getItem('pendingName') || 'Host';
+  const pendingName = localStorage.getItem('pendingName') || 'Player';
+  const pendingIsHost = localStorage.getItem('pendingIsHost');
   localStorage.removeItem('pendingRoom');
   localStorage.removeItem('pendingName');
+  localStorage.removeItem('pendingIsHost');
 
   myName = pendingName;
-  isHost = true;
 
-  socket.emit('create-room', { hostName: pendingName }, (res) => {
-    if (res.success) {
-      roomCode = res.roomCode;
-      currentRoom = res.room;
-      updateLobby(res.room);
-      showScreen('lobby');
-      initSpotify();
-    }
-  });
+  if (pendingIsHost === '0') {
+    // Non-host player returning from Spotify auth — rejoin existing room
+    isHost = false;
+    socket.emit('join-room', { roomCode: pendingRoom, playerName: pendingName }, (res) => {
+      if (res.success) {
+        roomCode = res.roomCode;
+        currentRoom = res.room;
+        updateLobby(res.room);
+        showScreen('lobby');
+        initSpotify();
+      }
+    });
+  } else {
+    // Host returning from Spotify auth — create room
+    isHost = true;
+    socket.emit('create-room', { hostName: pendingName }, (res) => {
+      if (res.success) {
+        roomCode = res.roomCode;
+        currentRoom = res.room;
+        updateLobby(res.room);
+        showScreen('lobby');
+        initSpotify();
+      }
+    });
+  }
 }
 
 function showError(msg) {
@@ -146,6 +168,7 @@ function updateLobby(room) {
         `<div class="player-item">
           <span>${p.name}${p.id === socket.id ? ' (you)' : ''}</span>
           ${p.isHost ? '<span class="host-badge">HOST</span>' : ''}
+          ${p.id === room.musicPlayerId ? '<span class="host-badge" style="background:var(--green)">🎵 DJ</span>' : ''}
         </div>`
     )
     .join('');
@@ -154,6 +177,13 @@ function updateLobby(room) {
   // Song count & playlist display
   $('song-count').textContent = room.songCount;
   updatePlaylist(room.songs || []);
+
+  // Show DJ connect prompt for non-host desktop players when no music player assigned
+  if (!isHost && isDesktop && !room.musicPlayerId && !spotifyVisitorId) {
+    $('dj-connect-prompt').classList.remove('hidden');
+  } else {
+    $('dj-connect-prompt').classList.add('hidden');
+  }
 
   // Host controls
   if (isHost) {
@@ -199,6 +229,16 @@ $('btn-copy-code').addEventListener('click', () => {
 $('btn-connect-spotify').addEventListener('click', () => {
   // Save name so we can rejoin after redirect
   localStorage.setItem('pendingName', myName);
+  localStorage.setItem('pendingRoom', roomCode);
+  localStorage.setItem('pendingIsHost', isHost ? '1' : '0');
+  window.location.href = `/login?roomCode=${roomCode}`;
+});
+
+// DJ connect button for non-host desktop players
+$('btn-connect-spotify-dj').addEventListener('click', () => {
+  localStorage.setItem('pendingName', myName);
+  localStorage.setItem('pendingRoom', roomCode);
+  localStorage.setItem('pendingIsHost', isHost ? '1' : '0');
   window.location.href = `/login?roomCode=${roomCode}`;
 });
 
@@ -220,8 +260,8 @@ async function initSpotify() {
   $('spotify-connect-prompt').classList.add('hidden');
   $('song-search-area').classList.remove('hidden');
 
-  // Initialize Spotify Web Playback SDK (only host needs this for playing)
-  if (isHost) {
+  // Initialize Spotify Web Playback SDK on desktop browsers
+  if (isDesktop) {
     if (window.Spotify) {
       setupSpotifyPlayer();
     } else {
@@ -261,7 +301,12 @@ function setupSpotifyPlayer() {
 
   spotifyPlayer.addListener('ready', ({ device_id }) => {
     spotifyDeviceId = device_id;
+    isMusicPlayer = true;
     console.log('Spotify player ready, device:', device_id);
+    // Tell the server this player has Spotify playback
+    if (roomCode) {
+      socket.emit('set-music-player', { roomCode });
+    }
   });
 
   spotifyPlayer.addListener('initialization_error', ({ message }) => {
@@ -528,8 +573,8 @@ socket.on('new-round', async (data) => {
     }
   }
 
-  // Host plays the song on Spotify
-  if (isHost && songUri) {
+  // Music player plays the song on Spotify (can be any desktop player, not just host)
+  if (isMusicPlayer && songUri) {
     await playSong(songUri);
   }
 });
@@ -554,7 +599,7 @@ socket.on('guess-result', (data) => {
     $('result-song-info').textContent = `${data.song.name} — ${data.song.artist}`;
     if (isHost) $('btn-next-round').classList.remove('hidden');
     updateScoreboard(data.room);
-    if (isHost) pauseSong();
+    if (isMusicPlayer) pauseSong();
   } else {
     // Wrong guess — only the guesser sees this
     const fb = $('guess-feedback');
@@ -585,7 +630,7 @@ socket.on('judge-result', (data) => {
   $('result-song-info').textContent = `${data.song.name} — ${data.song.artist}`;
   if (isHost) $('btn-next-round').classList.remove('hidden');
   updateScoreboard(data.room);
-  if (isHost) pauseSong();
+  if (isMusicPlayer) pauseSong();
 });
 
 // Time's up!
@@ -599,7 +644,7 @@ socket.on('time-up', (data) => {
   $('result-album-art').src = data.song.albumArt || '';
   $('result-song-info').textContent = `${data.song.name} — ${data.song.artist}`;
   if (isHost) $('btn-next-round').classList.remove('hidden');
-  if (isHost) pauseSong();
+  if (isMusicPlayer) pauseSong();
 });
 
 // Extension confirmed
@@ -621,13 +666,13 @@ socket.on('round-skipped', (data) => {
   $('result-album-art').src = data.song.albumArt || '';
   $('result-song-info').textContent = `${data.song.name} — ${data.song.artist}`;
   if (isHost) $('btn-next-round').classList.remove('hidden');
-  if (isHost) pauseSong();
+  if (isMusicPlayer) pauseSong();
 });
 
 socket.on('game-ended', (room) => {
   currentRoom = room;
   showScreen('gameover');
-  if (isHost) pauseSong();
+  if (isMusicPlayer) pauseSong();
 
   const sorted = [...room.players].sort((a, b) => b.score - a.score);
   const medals = ['🥇', '🥈', '🥉'];

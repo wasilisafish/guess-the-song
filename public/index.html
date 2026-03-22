@@ -73,8 +73,13 @@
           <h3>🎶 Song Playlist (<span id="song-count">0</span> songs)</h3>
 
           <div id="spotify-connect-prompt" class="spotify-prompt">
-            <p>Connect Spotify to search and add songs</p>
+            <p id="spotify-prompt-text">Connect Spotify to search and add songs</p>
             <button id="btn-connect-spotify" class="btn btn-spotify">Connect Spotify</button>
+          </div>
+
+          <div id="dj-connect-prompt" class="spotify-prompt hidden">
+            <p>No one is playing music yet. Connect Spotify on a computer to be the DJ!</p>
+            <button id="btn-connect-spotify-dj" class="btn btn-spotify">🎵 Become the DJ</button>
           </div>
 
           <div id="song-search-area" class="hidden">

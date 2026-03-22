@@ -73,6 +73,7 @@ function makeRoom(hostName) {
     gameMode: 'round-robin', // 'round-robin' or 'challenge'
     challengeTargetIndex: -1, // in challenge mode, who is being challenged
     challengeQueue: [],       // ordered list of player indices to challenge
+    musicPlayerId: null,      // socket id of whoever has Spotify playback
   };
   return rooms[code];
 }
@@ -332,6 +333,15 @@ io.on('connection', (socket) => {
 
     io.to(code).emit('room-updated', sanitizeRoom(room));
     callback({ success: true, roomCode: code, room: sanitizeRoom(room) });
+  });
+
+  // Register as the music player (whoever has Spotify playback ready)
+  socket.on('set-music-player', ({ roomCode }) => {
+    const room = rooms[roomCode];
+    if (!room) return;
+    room.musicPlayerId = socket.id;
+    console.log(`Music player set to ${socket.id} in room ${roomCode}`);
+    io.to(roomCode).emit('room-updated', sanitizeRoom(room));
   });
 
   // Add a song to the room's playlist
@@ -683,6 +693,7 @@ function sanitizeRoom(room) {
     roundActive: room.roundActive,
     revealSong: room.revealSong,
     gameMode: room.gameMode,
+    musicPlayerId: room.musicPlayerId,
     challengeName: room.gameMode === 'challenge' && room.challengeTargetIndex >= 0
       ? room.players[room.challengeTargetIndex]?.name : null,
   };
