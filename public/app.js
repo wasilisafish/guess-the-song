@@ -177,24 +177,42 @@ function updateLobby(room) {
   // Show/hide sections based on mode
   const isChallengeMode = selectedMode === 'challenge';
   const needsPlaylist = selectedMode === 'take-turns' || selectedMode === 'buzzer';
+  const spotifyConnected = !!spotifyVisitorId;
 
-  // Show song search area only in challenge mode
-  if (isChallengeMode) {
+  // Challenge mode: show the song search/add panel (right column)
+  if (isChallengeMode && spotifyConnected) {
     $('lobby-songs-section').classList.remove('hidden');
-    $('my-playlist-section').classList.add('hidden');
+    $('song-search-area').classList.remove('hidden');
   } else {
     $('lobby-songs-section').classList.add('hidden');
-    // Show playlist picker if Spotify is connected
-    if (spotifyVisitorId && needsPlaylist) {
-      $('my-playlist-section').classList.remove('hidden');
-    } else {
-      $('my-playlist-section').classList.add('hidden');
-    }
+    $('song-search-area').classList.add('hidden');
+  }
+
+  // Take-turns / Buzzer: show "Choose Playlist" only after Spotify is connected
+  if (spotifyConnected && needsPlaylist) {
+    $('my-playlist-section').classList.remove('hidden');
+  } else {
+    $('my-playlist-section').classList.add('hidden');
+  }
+
+  // Adjust layout: two columns only when challenge mode shows the song panel
+  const lobbyLayout = document.querySelector('.lobby-layout');
+  if (isChallengeMode && spotifyConnected) {
+    lobbyLayout.classList.remove('single-column');
+  } else {
+    lobbyLayout.classList.add('single-column');
   }
 
   // Song count
   $('song-count').textContent = room.songCount;
   updatePlaylist(room.songs || []);
+
+  // Spotify connect prompt: show if not connected yet
+  if (!spotifyConnected) {
+    $('spotify-connect-prompt').classList.remove('hidden');
+  } else {
+    $('spotify-connect-prompt').classList.add('hidden');
+  }
 
   // Show DJ connect prompt for non-host desktop players
   if (!isHost && isDesktop && !room.musicPlayerId && !spotifyVisitorId) {
@@ -289,20 +307,14 @@ async function initSpotify() {
     if (!tokenCheck.ok) {
       spotifyVisitorId = null;
       localStorage.removeItem('spotifyVisitorId');
-      $('spotify-connect-prompt').classList.remove('hidden');
-      $('song-search-area').classList.add('hidden');
+      // Refresh the lobby to show connect prompt
+      if (currentRoom) updateLobby(currentRoom);
       return;
     }
   }
 
-  // Hide connect prompt, show search area for challenge mode
-  $('spotify-connect-prompt').classList.add('hidden');
-  $('song-search-area').classList.remove('hidden');
-
-  // Show playlist picker for take-turns/buzzer
-  if (selectedMode !== 'challenge') {
-    $('my-playlist-section').classList.remove('hidden');
-  }
+  // Refresh lobby UI — it will show/hide the right sections based on spotifyVisitorId
+  if (currentRoom) updateLobby(currentRoom);
 
   // Initialize Spotify Web Playback SDK on desktop browsers
   if (isDesktop) {
@@ -401,6 +413,10 @@ $('btn-pick-my-playlist').addEventListener('click', () => {
 
 async function loadMyPlaylists() {
   if (myPlaylistsLoaded) return;
+  if (!spotifyVisitorId) {
+    alert('Connect Spotify first to load playlists.');
+    return;
+  }
 
   const listEl = $('my-playlist-list');
   listEl.innerHTML = '<p class="loading-text">Loading your playlists...</p>';
