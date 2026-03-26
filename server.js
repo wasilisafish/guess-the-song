@@ -256,10 +256,20 @@ app.get('/api/playlist-tracks', async (req, res) => {
 
     const playlist = await response.json();
     console.log('Playlist name:', playlist.name);
+    console.log('playlist.tracks exists:', !!playlist.tracks);
+    console.log('playlist.tracks.total:', playlist.tracks?.total);
+    console.log('playlist.tracks.items length:', playlist.tracks?.items?.length);
+    console.log('playlist.tracks.href:', playlist.tracks?.href);
+    // Log first item structure if it exists
+    if (playlist.tracks?.items?.[0]) {
+      const firstItem = playlist.tracks.items[0];
+      console.log('First item keys:', Object.keys(firstItem));
+      console.log('First item.track:', !!firstItem.track, 'First item.track?.name:', firstItem.track?.name);
+    }
 
     // Collect all track items, handling pagination for large playlists
     let rawItems = [];
-    if (playlist.tracks && playlist.tracks.items) {
+    if (playlist.tracks && playlist.tracks.items && playlist.tracks.items.length > 0) {
       rawItems = playlist.tracks.items;
 
       // Paginate if there are more tracks (Spotify returns max 100 at a time)
@@ -279,6 +289,26 @@ app.get('/api/playlist-tracks', async (req, res) => {
     } else if (playlist.items && playlist.items.items) {
       rawItems = playlist.items.items;
     }
+
+    // Fallback: if items is empty but total > 0, fetch tracks directly via the tracks endpoint
+    if (rawItems.length === 0 && playlist.tracks?.total > 0) {
+      console.log('Items empty but total is', playlist.tracks.total, '— fetching tracks endpoint directly');
+      let tracksUrl = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+      while (tracksUrl) {
+        console.log('Fetching tracks page:', tracksUrl);
+        const tracksRes = await fetch(tracksUrl, {
+          headers: { Authorization: `Bearer ${t.access_token}` },
+        });
+        if (!tracksRes.ok) {
+          console.error('Tracks fetch failed:', tracksRes.status);
+          break;
+        }
+        const tracksData = await tracksRes.json();
+        if (tracksData.items) rawItems = rawItems.concat(tracksData.items);
+        tracksUrl = tracksData.next;
+      }
+    }
+
     console.log('Total raw items:', rawItems.length);
 
     // Process tracks — Spotify may use "track" or "item" as the key
