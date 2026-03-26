@@ -423,6 +423,62 @@ input[type="text"]::placeholder { color: var(--text-dim); }
 .playlist-tracks-header span { font-size: 14px; font-weight: 600; }
 #playlist-tracks-list { max-height: 250px; overflow-y: auto; margin-bottom: 10px; }
 
+/* ─── Player Badges ─────────────────────────────────────────────── */
+.player-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ─── Playlist Status (lobby) ───────────────────────────────────── */
+.playlist-status { margin-bottom: 10px; }
+.playlist-status p { font-size: 13px; color: var(--text-dim); }
+
+#my-playlist-section {
+  margin-top: 16px; padding-top: 16px;
+  border-top: 1px solid #222244;
+}
+#my-playlist-section h3 { font-size: 15px; margin-bottom: 10px; }
+#my-playlist-picker { margin-top: 10px; }
+
+/* ─── Buzzer Button ─────────────────────────────────────────────── */
+.buzz-btn {
+  width: 100%;
+  padding: 24px;
+  font-size: 24px;
+  font-weight: 800;
+  border-radius: 16px;
+  margin-top: 16px;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+.buzz-btn:not(:disabled) {
+  animation: pulse-buzz 1.5s ease-in-out infinite;
+  background: linear-gradient(135deg, var(--green), var(--green-dim));
+}
+.buzz-btn:not(:disabled):hover {
+  transform: scale(1.03);
+  box-shadow: 0 0 30px rgba(29, 185, 84, 0.4);
+}
+
+@keyframes pulse-buzz {
+  0%, 100% { box-shadow: 0 0 10px rgba(29, 185, 84, 0.2); }
+  50% { box-shadow: 0 0 25px rgba(29, 185, 84, 0.5); }
+}
+
+/* ─── Pick Phase ────────────────────────────────────────────────── */
+#pick-track-list { max-height: 350px; overflow-y: auto; }
+.pick-btn {
+  background: var(--accent) !important;
+  border-radius: 6px !important;
+  width: auto !important;
+  height: auto !important;
+  padding: 6px 12px !important;
+  font-size: 13px !important;
+}
+
+/* ─── Mode buttons responsive ───────────────────────────────────── */
+@media (max-width: 500px) {
+  .mode-buttons { flex-direction: column; }
+}
+
 /* ─── Scrollbar ──────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

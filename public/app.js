@@ -10,9 +10,10 @@ let currentRoom = null;
 let timerInterval = null;
 let timerSeconds = 30;
 let currentExtensions = 0;
-let selectedMode = 'round-robin';
+let selectedMode = 'take-turns';
 let selectedChallengeTarget = null;
 let isMusicPlayer = false;
+let myPlaylistTracks = []; // full track list from my selected playlist
 
 // Detect if this is a desktop browser (Spotify SDK only works on desktop)
 const isDesktop = !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -40,13 +41,11 @@ function showScreen(name) {
   if (authId) {
     spotifyVisitorId = authId;
     localStorage.setItem('spotifyVisitorId', authId);
-    // Clean URL
     window.history.replaceState({}, '', '/');
   } else {
     spotifyVisitorId = localStorage.getItem('spotifyVisitorId');
   }
 
-  // If we came back from Spotify auth with a room code, auto-rejoin
   if (roomParam) {
     localStorage.setItem('pendingRoom', roomParam);
   }
@@ -77,9 +76,9 @@ $('btn-create-go').addEventListener('click', () => {
       updateLobby(res.room);
       showScreen('lobby');
 
-      // If not connected to Spotify, prompt login
       if (!spotifyVisitorId) {
         localStorage.setItem('pendingIsHost', '1');
+        localStorage.setItem('pendingName', myName);
         window.location.href = `/login?roomCode=${roomCode}`;
       } else {
         initSpotify();
@@ -122,7 +121,6 @@ if (localStorage.getItem('pendingRoom') && spotifyVisitorId) {
   myName = pendingName;
 
   if (pendingIsHost === '0') {
-    // Non-host player returning from Spotify auth — rejoin existing room
     isHost = false;
     socket.emit('join-room', { roomCode: pendingRoom, playerName: pendingName }, (res) => {
       if (res.success) {
@@ -134,7 +132,6 @@ if (localStorage.getItem('pendingRoom') && spotifyVisitorId) {
       }
     });
   } else {
-    // Host returning from Spotify auth — create room
     isHost = true;
     socket.emit('create-room', { hostName: pendingName }, (res) => {
       if (res.success) {
@@ -161,24 +158,45 @@ function updateLobby(room) {
   $('lobby-room-code').textContent = room.code;
   $('game-room-code').textContent = room.code;
 
-  // Players list
+  // Players list with playlist status
   const playersHtml = room.players
     .map(
       (p) =>
         `<div class="player-item">
           <span>${p.name}${p.id === socket.id ? ' (you)' : ''}</span>
-          ${p.isHost ? '<span class="host-badge">HOST</span>' : ''}
-          ${p.id === room.musicPlayerId ? '<span class="host-badge" style="background:var(--green)">🎵 DJ</span>' : ''}
+          <span class="player-badges">
+            ${p.isHost ? '<span class="host-badge">HOST</span>' : ''}
+            ${p.id === room.musicPlayerId ? '<span class="host-badge" style="background:var(--green)">🎵 DJ</span>' : ''}
+            ${p.hasPlaylist ? '<span class="host-badge" style="background:var(--accent)">🎶 ' + escapeHtml(p.playlistName || 'Playlist') + '</span>' : ''}
+          </span>
         </div>`
     )
     .join('');
   $('lobby-players').innerHTML = playersHtml;
 
-  // Song count & playlist display
+  // Show/hide sections based on mode
+  const isChallengeMode = selectedMode === 'challenge';
+  const needsPlaylist = selectedMode === 'take-turns' || selectedMode === 'buzzer';
+
+  // Show song search area only in challenge mode
+  if (isChallengeMode) {
+    $('lobby-songs-section').classList.remove('hidden');
+    $('my-playlist-section').classList.add('hidden');
+  } else {
+    $('lobby-songs-section').classList.add('hidden');
+    // Show playlist picker if Spotify is connected
+    if (spotifyVisitorId && needsPlaylist) {
+      $('my-playlist-section').classList.remove('hidden');
+    } else {
+      $('my-playlist-section').classList.add('hidden');
+    }
+  }
+
+  // Song count
   $('song-count').textContent = room.songCount;
   updatePlaylist(room.songs || []);
 
-  // Show DJ connect prompt for non-host desktop players when no music player assigned
+  // Show DJ connect prompt for non-host desktop players
   if (!isHost && isDesktop && !room.musicPlayerId && !spotifyVisitorId) {
     $('dj-connect-prompt').classList.remove('hidden');
   } else {
@@ -188,16 +206,7 @@ function updateLobby(room) {
   // Host controls
   if (isHost) {
     $('lobby-host-controls').classList.remove('hidden');
-    const canStart = room.songCount >= 2 &&
-      (selectedMode === 'round-robin' || selectedChallengeTarget !== null);
-    $('btn-start-game').disabled = !canStart;
-    if (room.songCount < 2) {
-      $('btn-start-game').textContent = `Start Game (need ${2 - room.songCount} more songs)`;
-    } else if (selectedMode === 'challenge' && selectedChallengeTarget === null) {
-      $('btn-start-game').textContent = 'Pick a player to challenge';
-    } else {
-      $('btn-start-game').textContent = `Start Game (${room.songCount} songs)`;
-    }
+    updateStartButton(room);
 
     // Update challenge player list
     $('challenge-player-list').innerHTML = room.players
@@ -218,6 +227,40 @@ function updateLobby(room) {
   }
 }
 
+function updateStartButton(room) {
+  const btn = $('btn-start-game');
+
+  if (selectedMode === 'challenge') {
+    const canStart = room.songCount >= 2 && selectedChallengeTarget !== null;
+    btn.disabled = !canStart;
+    if (room.songCount < 2) {
+      btn.textContent = `Start Game (need ${2 - room.songCount} more songs)`;
+    } else if (selectedChallengeTarget === null) {
+      btn.textContent = 'Pick a player to challenge';
+    } else {
+      btn.textContent = `Start Game (${room.songCount} songs)`;
+    }
+  } else if (selectedMode === 'take-turns') {
+    const playersReady = room.players.filter(p => p.hasPlaylist).length;
+    const canStart = playersReady >= 2;
+    btn.disabled = !canStart;
+    if (playersReady < 2) {
+      btn.textContent = `Waiting for playlists (${playersReady}/${room.players.length} ready)`;
+    } else {
+      btn.textContent = `Start Game — Take Turns`;
+    }
+  } else if (selectedMode === 'buzzer') {
+    const playersReady = room.players.filter(p => p.hasPlaylist).length;
+    const canStart = playersReady >= 1;
+    btn.disabled = !canStart;
+    if (playersReady < 1) {
+      btn.textContent = 'Waiting for at least 1 playlist';
+    } else {
+      btn.textContent = `Start Buzzer Mode`;
+    }
+  }
+}
+
 $('btn-copy-code').addEventListener('click', () => {
   navigator.clipboard.writeText(roomCode).then(() => {
     $('btn-copy-code').textContent = '✅ Copied!';
@@ -227,14 +270,12 @@ $('btn-copy-code').addEventListener('click', () => {
 
 // ─── Spotify ─────────────────────────────────────────────────────
 $('btn-connect-spotify').addEventListener('click', () => {
-  // Save name so we can rejoin after redirect
   localStorage.setItem('pendingName', myName);
   localStorage.setItem('pendingRoom', roomCode);
   localStorage.setItem('pendingIsHost', isHost ? '1' : '0');
   window.location.href = `/login?roomCode=${roomCode}`;
 });
 
-// DJ connect button for non-host desktop players
 $('btn-connect-spotify-dj').addEventListener('click', () => {
   localStorage.setItem('pendingName', myName);
   localStorage.setItem('pendingRoom', roomCode);
@@ -243,11 +284,9 @@ $('btn-connect-spotify-dj').addEventListener('click', () => {
 });
 
 async function initSpotify() {
-  // Verify the token still works (it gets lost when server restarts)
   if (spotifyVisitorId) {
     const tokenCheck = await fetch(`/api/token/${spotifyVisitorId}`);
     if (!tokenCheck.ok) {
-      // Token is gone — need to re-login
       spotifyVisitorId = null;
       localStorage.removeItem('spotifyVisitorId');
       $('spotify-connect-prompt').classList.remove('hidden');
@@ -256,20 +295,24 @@ async function initSpotify() {
     }
   }
 
-  // Show search area, hide connect prompt
+  // Hide connect prompt, show search area for challenge mode
   $('spotify-connect-prompt').classList.add('hidden');
   $('song-search-area').classList.remove('hidden');
+
+  // Show playlist picker for take-turns/buzzer
+  if (selectedMode !== 'challenge') {
+    $('my-playlist-section').classList.remove('hidden');
+  }
 
   // Initialize Spotify Web Playback SDK on desktop browsers
   if (isDesktop) {
     if (window.Spotify) {
       setupSpotifyPlayer();
     } else {
-      // Dynamically load the Spotify SDK only when needed
       window.onSpotifyWebPlaybackSDKReady = setupSpotifyPlayer;
       const script = document.createElement('script');
       script.src = 'https://sdk.scdn.co/spotify-player.js';
-      script.onerror = () => console.warn('Spotify SDK failed to load — playback may not work on this device');
+      script.onerror = () => console.warn('Spotify SDK failed to load');
       document.body.appendChild(script);
     }
   }
@@ -303,7 +346,6 @@ function setupSpotifyPlayer() {
     spotifyDeviceId = device_id;
     isMusicPlayer = true;
     console.log('Spotify player ready, device:', device_id);
-    // Tell the server this player has Spotify playback
     if (roomCode) {
       socket.emit('set-music-player', { roomCode });
     }
@@ -344,7 +386,90 @@ async function pauseSong() {
   });
 }
 
-// ─── Song Search ─────────────────────────────────────────────────
+// ─── My Playlist Selection (for take-turns / buzzer) ─────────────
+let myPlaylistsLoaded = false;
+
+$('btn-pick-my-playlist').addEventListener('click', () => {
+  const picker = $('my-playlist-picker');
+  if (picker.classList.contains('hidden')) {
+    picker.classList.remove('hidden');
+    loadMyPlaylists();
+  } else {
+    picker.classList.add('hidden');
+  }
+});
+
+async function loadMyPlaylists() {
+  if (myPlaylistsLoaded) return;
+
+  const listEl = $('my-playlist-list');
+  listEl.innerHTML = '<p class="loading-text">Loading your playlists...</p>';
+
+  try {
+    const res = await fetch(`/api/playlists?visitorId=${spotifyVisitorId}`);
+    if (!res.ok) {
+      listEl.innerHTML = '<p class="loading-text">Could not load playlists. Try reconnecting Spotify.</p>';
+      return;
+    }
+    const playlists = await res.json();
+    myPlaylistsLoaded = true;
+
+    if (playlists.length === 0) {
+      listEl.innerHTML = '<p class="loading-text">No playlists found.</p>';
+      return;
+    }
+
+    listEl.innerHTML = playlists.map(pl =>
+      `<div class="playlist-card" data-id="${pl.id}" data-name="${escapeHtml(pl.name)}">
+        <img src="${pl.image || ''}" alt="" />
+        <div class="playlist-card-info">
+          <div class="name">${escapeHtml(pl.name)}</div>
+          <div class="meta">${pl.trackCount > 0 ? pl.trackCount + ' songs' : ''}</div>
+        </div>
+      </div>`
+    ).join('');
+
+    document.querySelectorAll('#my-playlist-list .playlist-card').forEach(card => {
+      card.addEventListener('click', () => selectMyPlaylist(card.dataset.id, card.dataset.name));
+    });
+  } catch (err) {
+    console.error('loadMyPlaylists error:', err);
+    listEl.innerHTML = '<p class="loading-text">Error loading playlists.</p>';
+  }
+}
+
+async function selectMyPlaylist(playlistId, name) {
+  $('my-playlist-list').innerHTML = '<p class="loading-text">Loading tracks...</p>';
+
+  try {
+    const res = await fetch(`/api/playlist-tracks?playlistId=${playlistId}&visitorId=${spotifyVisitorId}`);
+    if (!res.ok) {
+      $('my-playlist-status').innerHTML = '<p style="color:var(--danger)">Failed to load playlist tracks.</p>';
+      return;
+    }
+    const tracks = await res.json();
+    myPlaylistTracks = tracks;
+
+    // Tell server about my playlist selection
+    socket.emit('select-playlist', {
+      roomCode,
+      playlistId,
+      playlistName: name,
+      tracks: tracks,
+    });
+
+    // Update UI
+    $('my-playlist-status').innerHTML =
+      `<p style="color:var(--green)">✅ Selected: <strong>${escapeHtml(name)}</strong> (${tracks.length} songs)</p>`;
+    $('my-playlist-picker').classList.add('hidden');
+    $('btn-pick-my-playlist').textContent = 'Change Playlist';
+
+  } catch {
+    $('my-playlist-status').innerHTML = '<p style="color:var(--danger)">Error loading tracks.</p>';
+  }
+}
+
+// ─── Song Search (for Challenge mode) ────────────────────────────
 let searchTimeout;
 $('input-search').addEventListener('input', () => {
   clearTimeout(searchTimeout);
@@ -361,7 +486,6 @@ async function doSearch() {
 
   const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&visitorId=${spotifyVisitorId}`);
   if (res.status === 401) {
-    // Token expired or server restarted — need to reconnect
     spotifyVisitorId = null;
     localStorage.removeItem('spotifyVisitorId');
     $('song-search-area').classList.add('hidden');
@@ -386,7 +510,6 @@ async function doSearch() {
     )
     .join('');
 
-  // Add click handlers
   document.querySelectorAll('.search-item .add-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -399,7 +522,7 @@ async function doSearch() {
   });
 }
 
-// ─── Playlist display ────────────────────────────────────────────
+// ─── Playlist display (Challenge mode lobby) ─────────────────────
 let previewAudio = null;
 let previewingUri = null;
 
@@ -423,16 +546,13 @@ function updatePlaylist(songs) {
     </div>`
   ).join('');
 
-  // Preview buttons — play 30s Spotify preview via Web Playback SDK
   document.querySelectorAll('.playlist-item .preview-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const uri = btn.dataset.uri;
-      togglePreview(uri, btn);
+      togglePreview(btn.dataset.uri, btn);
     });
   });
 
-  // Remove buttons
   document.querySelectorAll('.playlist-item .remove-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -442,7 +562,6 @@ function updatePlaylist(songs) {
 }
 
 async function togglePreview(uri, btn) {
-  // If already previewing this song, stop it
   if (previewingUri === uri) {
     await pauseSong();
     resetPreviewButtons();
@@ -450,17 +569,14 @@ async function togglePreview(uri, btn) {
     return;
   }
 
-  // Stop any current preview
   resetPreviewButtons();
 
-  // Play via Spotify SDK if available
   if (spotifyDeviceId) {
     await playSong(uri);
     previewingUri = uri;
     btn.textContent = '⏸';
     btn.classList.add('previewing');
 
-    // Auto-stop after 15 seconds (it's just a preview)
     setTimeout(async () => {
       if (previewingUri === uri) {
         await pauseSong();
@@ -483,25 +599,32 @@ socket.on('room-updated', (room) => {
   updateLobby(room);
 });
 
+socket.on('game-error', (data) => {
+  alert(data.message);
+});
+
 socket.on('game-started', (data) => {
   currentRoom = data;
   showScreen('game');
   updateScoreboard(data);
 
-  // Show challenge banner if in challenge mode
+  // Hide all game sub-areas initially
+  $('pick-phase-area').classList.add('hidden');
+  $('buzzer-area').classList.add('hidden');
+  $('main-game-area').classList.add('hidden');
+
   if (data.gameMode === 'challenge' && data.challengeName) {
     $('challenge-banner').classList.remove('hidden');
     $('challenge-target-name').textContent = data.challengeName;
-    // In challenge mode, hide host skip/end buttons (judges use inline buttons)
     $('game-host-controls').classList.add('hidden');
   } else {
     $('challenge-banner').classList.add('hidden');
-    if (isHost) $('game-host-controls').classList.remove('hidden');
+    if (isHost && data.gameMode !== 'buzzer') $('game-host-controls').classList.remove('hidden');
+    else $('game-host-controls').classList.add('hidden');
   }
 });
 
 socket.on('challenge-switch', (data) => {
-  // New player is being challenged
   $('challenge-banner').classList.remove('hidden');
   $('challenge-target-name').textContent = data.challengeName;
   $('round-result').classList.add('hidden');
@@ -510,12 +633,234 @@ socket.on('challenge-switch', (data) => {
   updateScoreboard(data.room);
 });
 
-socket.on('new-round', async (data) => {
-  const { round, totalSongs, guesserName, isGuesser, songUri, song, room, gameMode } = data;
+// ─── Pick Phase (Take-Turns mode) ────────────────────────────────
+socket.on('pick-phase', (data) => {
+  const { round, pickerName, guesserName, isPicker, isGuesser, pickerTracks, room } = data;
+  currentRoom = room;
+
+  $('game-round-info').textContent = `Round ${round}`;
+  updateScoreboard(room);
+
+  // Show pick phase area, hide others
+  $('pick-phase-area').classList.remove('hidden');
+  $('buzzer-area').classList.add('hidden');
+  $('main-game-area').classList.add('hidden');
+  $('round-result').classList.add('hidden');
+  $('game-host-controls').classList.add('hidden');
+
+  $('pick-phase-picker-name').textContent = pickerName;
+
+  if (isPicker && pickerTracks) {
+    // I'm the picker — show my playlist tracks to choose from
+    $('picker-area').classList.remove('hidden');
+    $('pick-waiting').classList.add('hidden');
+    $('picker-guesser-name').textContent = guesserName;
+
+    renderPickerTracks(pickerTracks);
+  } else {
+    // I'm waiting (guesser or spectator)
+    $('picker-area').classList.add('hidden');
+    $('pick-waiting').classList.remove('hidden');
+  }
+});
+
+function renderPickerTracks(tracks, filter = '') {
+  const filtered = filter
+    ? tracks.filter(t =>
+        t.name.toLowerCase().includes(filter.toLowerCase()) ||
+        t.artist.toLowerCase().includes(filter.toLowerCase())
+      )
+    : tracks;
+
+  $('pick-track-list').innerHTML = filtered.map((t, i) =>
+    `<div class="search-item pick-track-item" data-index="${tracks.indexOf(t)}">
+      <img src="${t.albumArt || ''}" alt="" />
+      <div class="search-item-info">
+        <div class="name">${escapeHtml(t.name)}</div>
+        <div class="artist">${escapeHtml(t.artist)}</div>
+      </div>
+      <button class="add-btn pick-btn" title="Pick this song">🎵 Pick</button>
+    </div>`
+  ).join('');
+
+  document.querySelectorAll('.pick-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.closest('.search-item').dataset.index);
+      const song = tracks[idx];
+      socket.emit('pick-song', { roomCode, song });
+      btn.textContent = '✓ Picked';
+      btn.disabled = true;
+      // Disable all other pick buttons
+      document.querySelectorAll('.pick-btn').forEach(b => { b.disabled = true; });
+    });
+  });
+}
+
+// Pick search/filter
+$('input-pick-search').addEventListener('input', () => {
+  if (!currentRoom || !currentRoom.pickPhase) return;
+  const me = currentRoom.players.find(p => p.id === socket.id);
+  if (me && myPlaylistTracks.length > 0) {
+    renderPickerTracks(myPlaylistTracks, $('input-pick-search').value.trim());
+  }
+});
+
+// ─── Buzzer Mode Events ──────────────────────────────────────────
+socket.on('buzzer-round', async (data) => {
+  const { round, totalSongs, songUri, room } = data;
   currentRoom = room;
 
   $('game-round-info').textContent = `Round ${round} / ${totalSongs}`;
   updateScoreboard(room);
+
+  // Show buzzer area, hide others
+  $('buzzer-area').classList.remove('hidden');
+  $('pick-phase-area').classList.add('hidden');
+  $('main-game-area').classList.add('hidden');
+  $('round-result').classList.add('hidden');
+  $('buzzed-area').classList.add('hidden');
+
+  $('btn-buzz-in').disabled = true;
+  $('btn-buzz-in').textContent = '🎵 Listen...';
+  $('buzzer-status-text').textContent = 'Listen... get ready to buzz in! 🎵';
+
+  // Show host controls for buzzer
+  if (isHost) {
+    $('game-host-controls').classList.remove('hidden');
+  }
+
+  // Start buzzer timer
+  startBuzzerTimer(30);
+
+  // Music player plays the song
+  if (isMusicPlayer && songUri) {
+    await playSong(songUri);
+  }
+});
+
+socket.on('buzzer-open', () => {
+  $('btn-buzz-in').disabled = false;
+  $('btn-buzz-in').textContent = '🖐 BUZZ IN!';
+  $('buzzer-status-text').textContent = 'Know the song? Buzz in! 🖐';
+});
+
+socket.on('player-buzzed', (data) => {
+  const { playerId, playerName, room } = data;
+  currentRoom = room;
+
+  // Pause music
+  if (isMusicPlayer) pauseSong();
+
+  $('btn-buzz-in').disabled = true;
+  $('btn-buzz-in').textContent = '🔒 Buzzed!';
+  $('buzzer-status-text').textContent = `${playerName} buzzed in!`;
+
+  // Show buzzed area with judge controls
+  $('buzzed-area').classList.remove('hidden');
+  $('buzzed-player-text').textContent = `${playerName} says their answer out loud! 🎤`;
+
+  // Only host sees judge controls
+  if (isHost) {
+    $('buzzer-judge-controls').classList.remove('hidden');
+  } else {
+    $('buzzer-judge-controls').classList.add('hidden');
+  }
+
+  stopBuzzerTimer();
+});
+
+socket.on('buzzer-result', (data) => {
+  const { correct, playerName, points, song, room } = data;
+  currentRoom = room;
+
+  // Hide buzzer area, show result
+  $('buzzer-area').classList.add('hidden');
+  $('main-game-area').classList.remove('hidden');
+  $('round-result').classList.remove('hidden');
+  $('guess-area').classList.add('hidden');
+  $('song-reveal').classList.add('hidden');
+  $('guesser-badge').classList.add('hidden');
+
+  if (correct) {
+    $('result-content').innerHTML =
+      `<h2 style="color: var(--green)">✅ ${escapeHtml(playerName)} got it! (+${points} pt)</h2>`;
+  } else {
+    $('result-content').innerHTML =
+      `<h2 style="color: var(--danger)">❌ ${escapeHtml(playerName)} was wrong!</h2>`;
+  }
+  $('result-album-art').src = song.albumArt || '';
+  $('result-song-info').textContent = `${song.name} — ${song.artist}`;
+  if (isHost) $('btn-next-round').classList.remove('hidden');
+  updateScoreboard(room);
+
+  stopBuzzerTimer();
+});
+
+$('btn-buzz-in').addEventListener('click', () => {
+  socket.emit('buzz-in', { roomCode });
+  $('btn-buzz-in').disabled = true;
+  $('btn-buzz-in').textContent = '⏳ Buzzing...';
+});
+
+$('btn-buzzer-correct').addEventListener('click', () => {
+  socket.emit('buzzer-judge', { roomCode, correct: true });
+});
+
+$('btn-buzzer-wrong').addEventListener('click', () => {
+  socket.emit('buzzer-judge', { roomCode, correct: false });
+});
+
+$('btn-buzzer-skip').addEventListener('click', () => {
+  socket.emit('skip-round', { roomCode });
+});
+
+// Buzzer timer
+let buzzerTimerInterval = null;
+let buzzerTimerSeconds = 30;
+
+function startBuzzerTimer(seconds) {
+  stopBuzzerTimer();
+  buzzerTimerSeconds = seconds;
+  updateBuzzerTimerDisplay();
+
+  buzzerTimerInterval = setInterval(() => {
+    buzzerTimerSeconds--;
+    updateBuzzerTimerDisplay();
+    if (buzzerTimerSeconds <= 0) stopBuzzerTimer();
+  }, 1000);
+}
+
+function stopBuzzerTimer() {
+  if (buzzerTimerInterval) {
+    clearInterval(buzzerTimerInterval);
+    buzzerTimerInterval = null;
+  }
+}
+
+function updateBuzzerTimerDisplay() {
+  const bar = $('buzzer-timer-bar');
+  const text = $('buzzer-timer-text');
+  if (!bar || !text) return;
+  const pct = (buzzerTimerSeconds / 30) * 100;
+  bar.style.width = pct + '%';
+  text.textContent = buzzerTimerSeconds + 's';
+  if (buzzerTimerSeconds <= 10) bar.classList.add('low');
+  else bar.classList.remove('low');
+}
+
+// ─── Standard Round Events (take-turns guessing + challenge) ─────
+socket.on('new-round', async (data) => {
+  const { round, totalSongs, guesserName, isGuesser, songUri, song, room, gameMode } = data;
+  currentRoom = room;
+
+  $('game-round-info').textContent = `Round ${round}${totalSongs !== '?' ? ' / ' + totalSongs : ''}`;
+  updateScoreboard(room);
+
+  // Show main game area, hide others
+  $('main-game-area').classList.remove('hidden');
+  $('pick-phase-area').classList.add('hidden');
+  $('buzzer-area').classList.add('hidden');
 
   // Reset visibility
   $('guesser-badge').classList.remove('hidden');
@@ -523,10 +868,10 @@ socket.on('new-round', async (data) => {
   $('round-result').classList.add('hidden');
   $('guess-feedback').classList.add('hidden');
 
-  const isChallengeMode = gameMode === 'challenge' || (room && room.gameMode === 'challenge');
+  const isChallengeMode = gameMode === 'challenge';
 
   if (isGuesser && isChallengeMode) {
-    // Challenge mode: guesser just listens & says answer out loud (no timer, no extend)
+    // Challenge mode guesser: say answer out loud
     $('song-reveal').classList.add('hidden');
     $('guess-area').classList.remove('hidden');
     $('input-guess-song').classList.add('hidden');
@@ -535,11 +880,10 @@ socket.on('new-round', async (data) => {
     $('btn-extend').classList.add('hidden');
     $('penalty-info').classList.add('hidden');
     $('guess-area').querySelector('.guess-prompt').textContent = 'Listen and say your answer out loud! 🎤';
-    // No timer in challenge mode — hide the timer display
     stopTimer();
     $('timer-bar').style.display = 'none';
   } else if (isGuesser) {
-    // Round-robin mode: guesser types their answer
+    // Take-turns mode guesser: type answer
     $('song-reveal').classList.add('hidden');
     $('guess-area').classList.remove('hidden');
     $('input-guess-song').classList.remove('hidden');
@@ -555,7 +899,7 @@ socket.on('new-round', async (data) => {
     $('timer-bar').style.display = '';
     startTimer(30);
   } else {
-    // I can see what's playing (non-guesser)
+    // Non-guesser: see the answer
     $('guess-area').classList.add('hidden');
     $('song-reveal').classList.remove('hidden');
     if (song) {
@@ -564,7 +908,6 @@ socket.on('new-round', async (data) => {
       $('reveal-song-artist').textContent = song.artist;
     }
 
-    // In challenge mode, show judge controls to non-guessers
     if (isChallengeMode) {
       $('judge-controls').classList.remove('hidden');
       $('hint-text-default').classList.add('hidden');
@@ -574,7 +917,12 @@ socket.on('new-round', async (data) => {
     }
   }
 
-  // Music player plays the song on Spotify (can be any desktop player, not just host)
+  // Show host controls for take-turns
+  if (isHost && gameMode === 'take-turns') {
+    $('game-host-controls').classList.remove('hidden');
+  }
+
+  // Music player plays the song
   if (isMusicPlayer && songUri) {
     await playSong(songUri);
   }
@@ -583,7 +931,6 @@ socket.on('new-round', async (data) => {
 socket.on('guess-result', (data) => {
   if (data.correct) {
     stopTimer();
-    // Show result to everyone
     $('guess-area').classList.add('hidden');
     $('song-reveal').classList.add('hidden');
     $('round-result').classList.remove('hidden');
@@ -602,7 +949,6 @@ socket.on('guess-result', (data) => {
     updateScoreboard(data.room);
     if (isMusicPlayer) pauseSong();
   } else {
-    // Wrong guess — only the guesser sees this
     const fb = $('guess-feedback');
     fb.classList.remove('hidden');
     fb.classList.remove('correct');
@@ -617,7 +963,6 @@ socket.on('guess-result', (data) => {
   }
 });
 
-// Judge marked correct (challenge mode)
 socket.on('judge-result', (data) => {
   stopTimer();
   $('guess-area').classList.add('hidden');
@@ -634,13 +979,16 @@ socket.on('judge-result', (data) => {
   if (isMusicPlayer) pauseSong();
 });
 
-// Time's up!
 socket.on('time-up', (data) => {
   stopTimer();
+  stopBuzzerTimer();
   $('guess-area').classList.add('hidden');
   $('song-reveal').classList.add('hidden');
   $('judge-controls').classList.add('hidden');
+  $('buzzer-area').classList.add('hidden');
+  $('main-game-area').classList.remove('hidden');
   $('round-result').classList.remove('hidden');
+  $('guesser-badge').classList.add('hidden');
   $('result-content').innerHTML = '<h2 style="color: var(--danger)">⏰ Time\'s up!</h2>';
   $('result-album-art').src = data.song.albumArt || '';
   $('result-song-info').textContent = `${data.song.name} — ${data.song.artist}`;
@@ -648,7 +996,6 @@ socket.on('time-up', (data) => {
   if (isMusicPlayer) pauseSong();
 });
 
-// Extension confirmed
 socket.on('time-extended', (data) => {
   currentExtensions = data.extensions;
   timerSeconds = 60;
@@ -659,10 +1006,14 @@ socket.on('time-extended', (data) => {
 
 socket.on('round-skipped', (data) => {
   stopTimer();
+  stopBuzzerTimer();
   $('guess-area').classList.add('hidden');
   $('song-reveal').classList.add('hidden');
   $('judge-controls').classList.add('hidden');
+  $('buzzer-area').classList.add('hidden');
+  $('main-game-area').classList.remove('hidden');
   $('round-result').classList.remove('hidden');
+  $('guesser-badge').classList.add('hidden');
   $('result-content').innerHTML = '<h2 style="color: var(--text-dim)">⏭ Skipped!</h2>';
   $('result-album-art').src = data.song.albumArt || '';
   $('result-song-info').textContent = `${data.song.name} — ${data.song.artist}`;
@@ -688,16 +1039,15 @@ socket.on('game-ended', (room) => {
     .join('');
 });
 
-// Game reset (back to lobby)
 socket.on('game-reset', (room) => {
   currentRoom = room;
   updateLobby(room);
   showScreen('lobby');
 });
 
-// ─── Tab switching (Search / Paste List) ─────────────────────────
+// ─── Tab switching (Challenge mode song search) ──────────────────
 function switchTab(activeTab) {
-  ['tab-search', 'tab-bulk', 'tab-playlist'].forEach(id => $( id).classList.remove('active'));
+  ['tab-search', 'tab-bulk', 'tab-playlist'].forEach(id => $(id).classList.remove('active'));
   ['search-mode', 'bulk-mode', 'playlist-mode'].forEach(id => $(id).classList.add('hidden'));
   $(activeTab).classList.add('active');
 
@@ -713,7 +1063,7 @@ $('tab-search').addEventListener('click', () => switchTab('tab-search'));
 $('tab-bulk').addEventListener('click', () => switchTab('tab-bulk'));
 $('tab-playlist').addEventListener('click', () => switchTab('tab-playlist'));
 
-// ─── Bulk paste: add many songs at once ──────────────────────────
+// ─── Bulk paste ──────────────────────────────────────────────────
 $('btn-bulk-add').addEventListener('click', async () => {
   const text = $('input-bulk').value.trim();
   if (!text) return;
@@ -731,7 +1081,6 @@ $('btn-bulk-add').addEventListener('click', async () => {
   let notFound = [];
 
   for (const line of lines) {
-    // Try to search Spotify for each line
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(line)}&visitorId=${spotifyVisitorId}`);
       if (!res.ok) { notFound.push(line); continue; }
@@ -750,20 +1099,13 @@ $('btn-bulk-add').addEventListener('click', async () => {
 
   $('btn-bulk-add').disabled = false;
   status.classList.remove('loading');
-
-  if (notFound.length === 0) {
-    status.classList.add('success');
-    status.textContent = `All ${found} songs added!`;
-  } else {
-    status.classList.add('success');
-    status.innerHTML = `Added ${found} songs.` +
-      (notFound.length > 0 ? `<br>Could not find: ${notFound.join(', ')}` : '');
-  }
-
+  status.classList.add('success');
+  status.innerHTML = `Added ${found} songs.` +
+    (notFound.length > 0 ? `<br>Could not find: ${notFound.join(', ')}` : '');
   $('input-bulk').value = '';
 });
 
-// ─── Playlist import ─────────────────────────────────────────────
+// ─── Playlist import (Challenge mode) ────────────────────────────
 let playlistsLoaded = false;
 let loadedPlaylistTracks = [];
 
@@ -775,14 +1117,10 @@ async function loadPlaylists() {
 
   try {
     const res = await fetch(`/api/playlists?visitorId=${spotifyVisitorId}`);
-    console.log('Playlists response status:', res.status);
-
     if (!res.ok) {
-      // Need to reconnect Spotify with new permissions
-      playlistsLoaded = false;
       listEl.innerHTML =
         '<div style="text-align:center; padding: 16px;">' +
-        '<p class="loading-text">Could not load playlists. You may need to reconnect Spotify with playlist permissions.</p>' +
+        '<p class="loading-text">Could not load playlists.</p>' +
         '<button id="btn-reconnect-spotify" class="btn btn-spotify" style="margin-top:10px;">Reconnect Spotify</button>' +
         '</div>';
       const reconnBtn = document.getElementById('btn-reconnect-spotify');
@@ -790,7 +1128,6 @@ async function loadPlaylists() {
         reconnBtn.addEventListener('click', () => {
           localStorage.setItem('pendingRoom', roomCode);
           localStorage.setItem('pendingName', myName);
-          // Clear old visitor ID so we get a fresh token with new scopes
           localStorage.removeItem('spotifyVisitorId');
           spotifyVisitorId = null;
           window.location.href = `/login?roomCode=${roomCode}`;
@@ -799,11 +1136,10 @@ async function loadPlaylists() {
       return;
     }
     const playlists = await res.json();
-    console.log('Playlists loaded:', playlists.length);
     playlistsLoaded = true;
 
     if (playlists.length === 0) {
-      listEl.innerHTML = '<p class="loading-text">No playlists found in your Spotify account.</p>';
+      listEl.innerHTML = '<p class="loading-text">No playlists found.</p>';
       return;
     }
 
@@ -817,7 +1153,7 @@ async function loadPlaylists() {
       </div>`
     ).join('');
 
-    document.querySelectorAll('.playlist-card').forEach(card => {
+    document.querySelectorAll('#playlist-list .playlist-card').forEach(card => {
       card.addEventListener('click', () => openPlaylist(card.dataset.id, card.dataset.name));
     });
   } catch (err) {
@@ -834,17 +1170,12 @@ async function openPlaylist(playlistId, name) {
   $('playlist-import-status').classList.add('hidden');
 
   try {
-    console.log('Fetching tracks for playlist:', playlistId);
     const res = await fetch(`/api/playlist-tracks?playlistId=${playlistId}&visitorId=${spotifyVisitorId}`);
-    console.log('Playlist tracks response status:', res.status);
     if (!res.ok) {
-      const errData = await res.text();
-      console.error('Playlist tracks error:', errData);
       $('playlist-tracks-list').innerHTML = '<p class="loading-text">Failed to load tracks.</p>';
       return;
     }
     loadedPlaylistTracks = await res.json();
-    console.log('Loaded playlist tracks:', loadedPlaylistTracks.length);
 
     if (loadedPlaylistTracks.length === 0) {
       $('playlist-tracks-list').innerHTML = '<p class="loading-text">This playlist appears to be empty.</p>';
@@ -862,7 +1193,6 @@ async function openPlaylist(playlistId, name) {
       </div>`
     ).join('');
 
-    // Single song add buttons
     document.querySelectorAll('#playlist-tracks-list .add-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -893,7 +1223,6 @@ $('btn-add-all-playlist').addEventListener('click', () => {
   status.classList.add('success');
   status.textContent = `Added ${added} songs from playlist!`;
 
-  // Mark all buttons as added
   document.querySelectorAll('#playlist-tracks-list .add-btn').forEach(btn => {
     btn.textContent = '✓';
     btn.disabled = true;
@@ -902,9 +1231,20 @@ $('btn-add-all-playlist').addEventListener('click', () => {
 
 // ─── Game Controls ───────────────────────────────────────────────
 // Mode selection
-$('mode-robin').addEventListener('click', () => {
-  selectedMode = 'round-robin';
-  $('mode-robin').classList.add('active');
+$('mode-turns').addEventListener('click', () => {
+  selectedMode = 'take-turns';
+  $('mode-turns').classList.add('active');
+  $('mode-buzzer').classList.remove('active');
+  $('mode-challenge').classList.remove('active');
+  $('challenge-picker').classList.add('hidden');
+  selectedChallengeTarget = null;
+  if (currentRoom) updateLobby(currentRoom);
+});
+
+$('mode-buzzer').addEventListener('click', () => {
+  selectedMode = 'buzzer';
+  $('mode-buzzer').classList.add('active');
+  $('mode-turns').classList.remove('active');
   $('mode-challenge').classList.remove('active');
   $('challenge-picker').classList.add('hidden');
   selectedChallengeTarget = null;
@@ -914,7 +1254,8 @@ $('mode-robin').addEventListener('click', () => {
 $('mode-challenge').addEventListener('click', () => {
   selectedMode = 'challenge';
   $('mode-challenge').classList.add('active');
-  $('mode-robin').classList.remove('active');
+  $('mode-turns').classList.remove('active');
+  $('mode-buzzer').classList.remove('active');
   $('challenge-picker').classList.remove('hidden');
   if (currentRoom) updateLobby(currentRoom);
 });
@@ -942,7 +1283,6 @@ function submitGuess() {
   socket.emit('submit-guess', { roomCode, guessSong, guessArtist });
 }
 
-// Extend time button
 $('btn-extend').addEventListener('click', () => {
   socket.emit('extend-time', { roomCode });
 });
@@ -1002,9 +1342,7 @@ function startTimer(seconds) {
   timerInterval = setInterval(() => {
     timerSeconds--;
     updateTimerDisplay();
-    if (timerSeconds <= 0) {
-      stopTimer();
-    }
+    if (timerSeconds <= 0) stopTimer();
   }, 1000);
 }
 
@@ -1024,11 +1362,8 @@ function updateTimerDisplay() {
   bar.style.width = pct + '%';
   text.textContent = timerSeconds + 's';
 
-  if (timerSeconds <= 10) {
-    bar.classList.add('low');
-  } else {
-    bar.classList.remove('low');
-  }
+  if (timerSeconds <= 10) bar.classList.add('low');
+  else bar.classList.remove('low');
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────

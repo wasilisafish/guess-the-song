@@ -45,13 +45,44 @@
             <button id="btn-copy-code" class="btn btn-small" title="Copy room code">📋 Copy</button>
           </div>
           <div id="lobby-players" class="player-list"></div>
+
+          <!-- Spotify connect prompt (for players who haven't connected) -->
+          <div id="spotify-connect-prompt" class="spotify-prompt">
+            <p id="spotify-prompt-text">Connect Spotify to search and add songs</p>
+            <button id="btn-connect-spotify" class="btn btn-spotify">Connect Spotify</button>
+          </div>
+
+          <div id="dj-connect-prompt" class="spotify-prompt hidden">
+            <p>No one is playing music yet. Connect Spotify on a computer to be the DJ!</p>
+            <button id="btn-connect-spotify-dj" class="btn btn-spotify">🎵 Become the DJ</button>
+          </div>
+
+          <!-- My Playlist Selection (for take-turns and buzzer modes) -->
+          <div id="my-playlist-section" class="hidden">
+            <h3>🎶 Your Playlist</h3>
+            <div id="my-playlist-status" class="playlist-status">
+              <p>Pick a playlist so others can guess your songs!</p>
+            </div>
+            <button id="btn-pick-my-playlist" class="btn btn-spotify">Choose Playlist</button>
+            <div id="my-playlist-picker" class="hidden">
+              <div id="my-playlist-list" class="playlist-list">
+                <p class="loading-text">Loading your playlists...</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Host Controls -->
           <div id="lobby-host-controls" class="hidden">
             <div class="mode-select">
               <p class="mode-label">Game Mode:</p>
               <div class="mode-buttons">
-                <button id="mode-robin" class="mode-btn active" data-mode="round-robin">
-                  🔄 Round Robin
-                  <span class="mode-desc">Players take turns guessing</span>
+                <button id="mode-turns" class="mode-btn active" data-mode="take-turns">
+                  🔄 Take Turns
+                  <span class="mode-desc">Pick a song → opponent guesses</span>
+                </button>
+                <button id="mode-buzzer" class="mode-btn" data-mode="buzzer">
+                  🖐 Buzzer
+                  <span class="mode-desc">Random songs — raise hand to answer</span>
                 </button>
                 <button id="mode-challenge" class="mode-btn" data-mode="challenge">
                   🎯 Challenge
@@ -64,23 +95,14 @@
               </div>
             </div>
             <button id="btn-start-game" class="btn btn-primary btn-large" disabled>
-              Start Game (need 2+ songs)
+              Start Game
             </button>
           </div>
         </div>
 
-        <div class="card lobby-songs">
+        <!-- Song area (only for Challenge mode — manual song adding) -->
+        <div id="lobby-songs-section" class="card lobby-songs hidden">
           <h3>🎶 Song Playlist (<span id="song-count">0</span> songs)</h3>
-
-          <div id="spotify-connect-prompt" class="spotify-prompt">
-            <p id="spotify-prompt-text">Connect Spotify to search and add songs</p>
-            <button id="btn-connect-spotify" class="btn btn-spotify">Connect Spotify</button>
-          </div>
-
-          <div id="dj-connect-prompt" class="spotify-prompt hidden">
-            <p>No one is playing music yet. Connect Spotify on a computer to be the DJ!</p>
-            <button id="btn-connect-spotify-dj" class="btn btn-spotify">🎵 Become the DJ</button>
-          </div>
 
           <div id="song-search-area" class="hidden">
             <div class="search-tabs">
@@ -132,7 +154,7 @@ Bohemian Rhapsody - Queen"></textarea>
     <div id="screen-game" class="screen">
       <div class="game-layout">
         <div class="game-header">
-          <span id="game-round-info">Round 1 / 5</span>
+          <span id="game-round-info">Round 1</span>
           <span id="game-room-code" class="room-code-small"></span>
         </div>
 
@@ -146,8 +168,71 @@ Bohemian Rhapsody - Queen"></textarea>
           <div id="game-scoreboard"></div>
         </div>
 
-        <!-- Game Area -->
-        <div class="card game-area">
+        <!-- Pick Phase (take-turns: picker chooses a song) -->
+        <div id="pick-phase-area" class="card game-area hidden">
+          <div id="pick-phase-badge" class="guesser-badge">
+            <span>🎵</span> <span id="pick-phase-picker-name"></span> is picking a song...
+          </div>
+
+          <!-- What the picker sees -->
+          <div id="picker-area" class="hidden">
+            <p class="guess-prompt">Pick a song for <span id="picker-guesser-name"></span> to guess!</p>
+            <div class="search-bar">
+              <input type="text" id="input-pick-search" placeholder="Search your playlist..." />
+            </div>
+            <div id="pick-track-list" class="search-results"></div>
+          </div>
+
+          <!-- What the guesser sees while waiting -->
+          <div id="pick-waiting" class="hidden">
+            <div class="listening-animation">
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+            </div>
+            <p class="guess-prompt">Waiting for a song to be picked... 🎵</p>
+          </div>
+        </div>
+
+        <!-- Buzzer Area -->
+        <div id="buzzer-area" class="card game-area hidden">
+          <div class="listening-animation">
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+          </div>
+          <div class="timer-row">
+            <div class="timer-bar-container">
+              <div id="buzzer-timer-bar" class="timer-bar"></div>
+            </div>
+            <span id="buzzer-timer-text" class="timer-text">30s</span>
+          </div>
+          <p id="buzzer-status-text" class="guess-prompt">Listen... get ready to buzz in! 🎵</p>
+          <button id="btn-buzz-in" class="btn btn-primary btn-large buzz-btn" disabled>
+            🖐 BUZZ IN!
+          </button>
+
+          <!-- After someone buzzes -->
+          <div id="buzzed-area" class="hidden">
+            <p id="buzzed-player-text" class="guess-prompt"></p>
+            <!-- Host/judge controls for buzzer -->
+            <div id="buzzer-judge-controls" class="judge-controls">
+              <p class="judge-prompt">Did they get it right?</p>
+              <div class="judge-buttons">
+                <button id="btn-buzzer-correct" class="btn btn-green">✓ Correct (+1 pt)</button>
+                <button id="btn-buzzer-wrong" class="btn btn-danger">✕ Wrong</button>
+                <button id="btn-buzzer-skip" class="btn btn-secondary">Skip →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Game Area (for take-turns guessing and challenge mode) -->
+        <div class="card game-area" id="main-game-area">
           <div id="guesser-badge" class="guesser-badge hidden">
             <span>🎧</span> <span id="guesser-name"></span> is guessing!
           </div>
@@ -222,8 +307,8 @@ Bohemian Rhapsody - Queen"></textarea>
         <h1>🏆 Game Over!</h1>
         <div id="final-scores"></div>
         <div class="gameover-buttons">
-          <button id="btn-play-again" class="btn btn-primary btn-large">Play Again (same songs)</button>
-          <button id="btn-start-over" class="btn btn-secondary btn-large">Start Over (new songs)</button>
+          <button id="btn-play-again" class="btn btn-primary btn-large">Play Again</button>
+          <button id="btn-start-over" class="btn btn-secondary btn-large">Back to Lobby</button>
         </div>
       </div>
     </div>
