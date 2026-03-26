@@ -290,9 +290,9 @@ app.get('/api/playlist-tracks', async (req, res) => {
       rawItems = playlist.items.items;
     }
 
-    // Fallback: if items is empty but total > 0, fetch tracks directly via the tracks endpoint
-    if (rawItems.length === 0 && playlist.tracks?.total > 0) {
-      console.log('Items empty but total is', playlist.tracks.total, '— fetching tracks endpoint directly');
+    // Fallback: if items is empty, always try fetching tracks directly via the tracks endpoint
+    if (rawItems.length === 0) {
+      console.log('No items found in playlist response — fetching tracks endpoint directly');
       let tracksUrl = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
       while (tracksUrl) {
         console.log('Fetching tracks page:', tracksUrl);
