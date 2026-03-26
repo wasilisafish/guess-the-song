@@ -241,7 +241,7 @@ app.get('/api/playlist-tracks', async (req, res) => {
   await ensureFreshToken(t);
 
   try {
-    // Fetch the playlist — Spotify may return tracks inside playlist.tracks.items or playlist.items
+    // Fetch the playlist with tracks
     const url = `https://api.spotify.com/v1/playlists/${playlistId}`;
     console.log('Fetching playlist:', url);
     const response = await fetch(url, {
@@ -255,29 +255,40 @@ app.get('/api/playlist-tracks', async (req, res) => {
     }
 
     const playlist = await response.json();
+    console.log('Playlist name:', playlist.name);
 
-    // Debug: dump the raw response to understand the structure
-    const raw = JSON.stringify(playlist);
-    console.log('FULL RESPONSE (first 2000 chars):', raw.substring(0, 2000));
-
-    // Spotify API can return items in different places depending on version
+    // Collect all track items, handling pagination for large playlists
     let rawItems = [];
-    if (playlist.tracks && playlist.tracks.items && playlist.tracks.items.length > 0) {
+    if (playlist.tracks && playlist.tracks.items) {
       rawItems = playlist.tracks.items;
+
+      // Paginate if there are more tracks (Spotify returns max 100 at a time)
+      let nextUrl = playlist.tracks.next;
+      while (nextUrl) {
+        console.log('Fetching next page:', nextUrl);
+        const nextRes = await fetch(nextUrl, {
+          headers: { Authorization: `Bearer ${t.access_token}` },
+        });
+        if (!nextRes.ok) break;
+        const nextData = await nextRes.json();
+        if (nextData.items) rawItems = rawItems.concat(nextData.items);
+        nextUrl = nextData.next;
+      }
     } else if (Array.isArray(playlist.items) && playlist.items.length > 0) {
-      // playlist.items could be a paging object with its own items
       rawItems = playlist.items;
     } else if (playlist.items && playlist.items.items) {
-      // playlist.items is a paging object like { href, items: [...], total, ... }
       rawItems = playlist.items.items;
     }
-    console.log('Playlist name:', playlist.name, '| Raw items:', rawItems.length);
+    console.log('Total raw items:', rawItems.length);
 
-    // Spotify API may use "track" or "item" as the key for the song object
+    // Process tracks — Spotify may use "track" or "item" as the key
     const tracks = rawItems
       .map((item) => {
         const t = item.track || item.item || item;
+        // Skip local files, podcasts, and null tracks (can happen with removed songs)
         if (!t || !t.uri || t.uri.startsWith('spotify:local')) return null;
+        if (t.type && t.type !== 'track') return null;
+        if (!t.name || !t.artists) return null;
         return {
           uri: t.uri,
           name: t.name,
@@ -461,6 +472,7 @@ io.on('connection', (socket) => {
   socket.on('extend-time', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (!room || !room.roundActive) return;
+    if (room.gameMode === 'challenge') return; // no timer in challenge mode
 
     room.roundExtensions++;
 
@@ -647,8 +659,10 @@ function startRound(roomCode) {
     }
   });
 
-  // Start 30-second timer
-  room.roundTimer = setTimeout(() => timeUp(roomCode), 30000);
+  // Start 30-second timer (only in round-robin mode — challenge mode has no time limit)
+  if (room.gameMode !== 'challenge') {
+    room.roundTimer = setTimeout(() => timeUp(roomCode), 30000);
+  }
 }
 
 // Called when the 30-second timer runs out

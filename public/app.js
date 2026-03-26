@@ -526,18 +526,18 @@ socket.on('new-round', async (data) => {
   const isChallengeMode = gameMode === 'challenge' || (room && room.gameMode === 'challenge');
 
   if (isGuesser && isChallengeMode) {
-    // Challenge mode: guesser just listens & says answer out loud (no typing)
+    // Challenge mode: guesser just listens & says answer out loud (no timer, no extend)
     $('song-reveal').classList.add('hidden');
     $('guess-area').classList.remove('hidden');
     $('input-guess-song').classList.add('hidden');
     $('input-guess-artist').classList.add('hidden');
     $('btn-guess').classList.add('hidden');
-    $('btn-extend').classList.remove('hidden');
-    $('btn-extend').textContent = '+60s (-0.5 pts)';
+    $('btn-extend').classList.add('hidden');
     $('penalty-info').classList.add('hidden');
     $('guess-area').querySelector('.guess-prompt').textContent = 'Listen and say your answer out loud! 🎤';
-    currentExtensions = 0;
-    startTimer(30);
+    // No timer in challenge mode — hide the timer display
+    stopTimer();
+    $('timer-bar').style.display = 'none';
   } else if (isGuesser) {
     // Round-robin mode: guesser types their answer
     $('song-reveal').classList.add('hidden');
@@ -552,6 +552,7 @@ socket.on('new-round', async (data) => {
     $('input-guess-artist').value = '';
     $('input-guess-song').focus();
     currentExtensions = 0;
+    $('timer-bar').style.display = '';
     startTimer(30);
   } else {
     // I can see what's playing (non-guesser)
