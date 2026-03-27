@@ -480,6 +480,24 @@ async function selectMyPlaylist(playlistId, name) {
     $('my-playlist-picker').classList.add('hidden');
     $('btn-pick-my-playlist').textContent = 'Change Playlist';
 
+    // Show track preview
+    const previewEl = $('my-playlist-tracks-preview');
+    if (tracks.length > 0) {
+      previewEl.classList.remove('hidden');
+      previewEl.innerHTML = tracks.map((t) =>
+        `<div class="playlist-item">
+          <img src="${t.albumArt || ''}" alt="" class="playlist-thumb" />
+          <div class="playlist-item-info">
+            <div class="name">${escapeHtml(t.name)}</div>
+            <div class="artist">${escapeHtml(t.artist)}</div>
+          </div>
+        </div>`
+      ).join('');
+    } else {
+      previewEl.classList.remove('hidden');
+      previewEl.innerHTML = '<p class="empty-playlist">This playlist appears to be empty.</p>';
+    }
+
   } catch {
     $('my-playlist-status').innerHTML = '<p style="color:var(--danger)">Error loading tracks.</p>';
   }
